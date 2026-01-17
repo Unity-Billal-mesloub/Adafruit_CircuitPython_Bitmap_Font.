@@ -1,20 +1,30 @@
-# pylint: skip-file
+# SPDX-FileCopyrightText: 2019 Scott Shawcroft for Adafruit Industries
+#
+# SPDX-License-Identifier: MIT
+
 # Remove the above when TTF is actually supported.
 
-import struct
+try:
+    from io import FileIO
+    from typing import Tuple
 
+    from displayio import Bitmap
+except ImportError:
+    pass
+
+import struct
 
 # https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6glyf.html
 
 
 class TTF:
-    def __init__(self, f):
+    def __init__(self, f: FileIO, bitmap: Bitmap) -> None:
         f.seek(0)
         self.file = f
 
         self.characters = {}
 
-        def read(format):
+        def read(format: str) -> Tuple:
             s = struct.calcsize(format)
             return struct.unpack_from(format, f.read(s))
 
@@ -48,7 +58,7 @@ class TTF:
                 for _ in range(numberOfContours):
                     ends.append(read(">H"))
                 instructionLength = read(">h")[0]
-                instructions = read(">{}s".format(instructionLength))[0]
+                instructions = read(f">{instructionLength}s")[0]
                 print(instructions)
                 break
             else:

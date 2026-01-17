@@ -1,24 +1,7 @@
-# The MIT License (MIT)
+# SPDX-FileCopyrightText: 2019 Scott Shawcroft for Adafruit Industries
 #
-# Copyright (c) 2019 Scott Shawcroft for Adafruit Industries LLC
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
+# SPDX-License-Identifier: MIT
+
 """
 `adafruit_bitmap_font.bitmap_font`
 ====================================================
@@ -39,13 +22,28 @@ Implementation Notes
 
 """
 
-__version__ = "0.0.0-auto.0"
+try:
+    from typing import Optional, Union
+
+    from displayio import Bitmap
+
+    from . import bdf, lvfontbin, pcf, ttf
+except ImportError:
+    pass
+
+__version__ = "0.0.0+auto.0"
 __repo__ = "https://github.com/adafruit/Adafruit_CircuitPython_Bitmap_Font.git"
 
 
-def load_font(filename, bitmap=None):
+# The LVGL file starts with the size of the 'head' section. It hasn't changed in five years so
+# we can treat it like a magic number.
+LVGL_HEADER_SIZE = b"\x30\x00\x00\x00"
+
+
+def load_font(
+    filename: str, bitmap: Optional[Bitmap] = None
+) -> Union[bdf.BDF, lvfontbin.LVGLFont, pcf.PCF, ttf.TTF]:
     """Loads a font file. Returns None if unsupported."""
-    # pylint: disable=import-outside-toplevel
     if not bitmap:
         import displayio
 
@@ -57,11 +55,19 @@ def load_font(filename, bitmap=None):
 
         return bdf.BDF(font_file, bitmap)
     if filename.endswith("pcf") and first_four == b"\x01fcp":
-        import pcf
+        from . import pcf
 
-        return pcf.PCF(font_file)
+        return pcf.PCF(font_file, bitmap)
     if filename.endswith("ttf") and first_four == b"\x00\x01\x00\x00":
-        import ttf
+        from . import ttf
 
-        return ttf.TTF(font_file)
-    return None
+        return ttf.TTF(font_file, bitmap)
+
+    if (
+        filename.endswith("bin") or filename.endswith("lvfontbin")
+    ) and first_four == LVGL_HEADER_SIZE:
+        from . import lvfontbin
+
+        return lvfontbin.LVGLFont(font_file, bitmap)
+
+    raise ValueError("Unknown magic number %r" % first_four)

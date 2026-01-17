@@ -1,24 +1,7 @@
-# The MIT License (MIT)
+# SPDX-FileCopyrightText: 2019 Scott Shawcroft for Adafruit Industries
 #
-# Copyright (c) 2019 Scott Shawcroft for Adafruit Industries LLC
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
+# SPDX-License-Identifier: MIT
+
 """
 `adafruit_bitmap_font.bdf`
 ====================================================
@@ -39,51 +22,108 @@ Implementation Notes
 
 """
 
+try:
+    from io import FileIO
+    from typing import Iterable, Optional, Tuple, Union
+
+    from displayio import Bitmap
+except ImportError:
+    pass
+
 import gc
 
-try:
-    from displayio import Glyph
-except ImportError:
-    from fontio import Glyph
+from fontio import Glyph
+
 from .glyph_cache import GlyphCache
 
-__version__ = "0.0.0-auto.0"
+__version__ = "0.0.0+auto.0"
 __repo__ = "https://github.com/adafruit/Adafruit_CircuitPython_Bitmap_Font.git"
 
 
 class BDF(GlyphCache):
     """Loads glyphs from a BDF file in the given bitmap_class."""
 
-    def __init__(self, f, bitmap_class):
+    def __init__(self, f: FileIO, bitmap_class: Bitmap) -> None:
         super().__init__()
         self.file = f
         self.name = f
         self.file.seek(0)
         self.bitmap_class = bitmap_class
-        line = self.file.readline()
-        line = str(line, "utf-8")
+        line = self._readline_file()
         if not line or not line.startswith("STARTFONT 2.1"):
             raise ValueError("Unsupported file version")
+        self._verify_bounding_box()
         self.point_size = None
         self.x_resolution = None
         self.y_resolution = None
+        self._ascent = None
+        self._descent = None
 
-    def get_bounding_box(self):
-        """Return the maximum glyph size as a 4-tuple of: width, height, x_offset, y_offset"""
+    @property
+    def descent(self) -> Optional[int]:
+        """The number of pixels below the baseline of a typical descender"""
+        if self._descent is None:
+            self.file.seek(0)
+            while True:
+                line = self.file.readline()
+                if not line:
+                    break
+
+                if line.startswith(b"FONT_DESCENT "):
+                    self._descent = int(line.split()[1])
+                    break
+
+        return self._descent
+
+    @property
+    def ascent(self) -> Optional[int]:
+        """The number of pixels above the baseline of a typical ascender"""
+        if self._ascent is None:
+            self.file.seek(0)
+            while True:
+                line = self._readline_file()
+                if not line:
+                    break
+
+                if line.startswith("FONT_ASCENT "):
+                    self._ascent = int(line.split()[1])
+                    break
+
+        return self._ascent
+
+    def _verify_bounding_box(self) -> None:
+        """Private function to verify FOUNTBOUNDINGBOX parameter
+        This function will parse the first 10 lines of the font source
+        file to verify the value or raise an exception in case is not found
+        """
         self.file.seek(0)
-        while True:
-            line = self.file.readline()
-            line = str(line, "utf-8")
-            if not line:
-                break
-
+        # Normally information about the FONT is in the first four lines.
+        # Exception is when font file have a comment. Comments are three lines
+        # 10 lines is a safe bet
+        for _ in range(11):
+            line = self._readline_file()
+            while line.startswith("COMMENT "):
+                line = self._readline_file()
             if line.startswith("FONTBOUNDINGBOX "):
                 _, x, y, x_offset, y_offset = line.split()
-                return (int(x), int(y), int(x_offset), int(y_offset))
-        return None
+                self._boundingbox = (int(x), int(y), int(x_offset), int(y_offset))
 
-    def load_glyphs(self, code_points):
-        # pylint: disable=too-many-statements,too-many-branches,too-many-nested-blocks,too-many-locals
+        try:
+            self._boundingbox
+        except AttributeError as error:
+            raise RuntimeError(
+                "Source file does not have the FOUNTBOUNDINGBOX parameter"
+            ) from error
+
+    def _readline_file(self) -> str:
+        line = self.file.readline()
+        return str(line, "utf-8")
+
+    def get_bounding_box(self) -> Tuple[int, int, int, int]:
+        """Return the maximum glyph size as a 4-tuple of: width, height, x_offset, y_offset"""
+        return self._boundingbox
+
+    def load_glyphs(self, code_points: Union[int, str, Iterable[int]]) -> None:
         metadata = True
         character = False
         code_point = None
@@ -101,13 +141,13 @@ class BDF(GlyphCache):
             remaining = code_points
         else:
             remaining = set(code_points)
-        for code_point in remaining:
+        for code_point in remaining.copy():
             if code_point in self._glyphs and self._glyphs[code_point]:
                 remaining.remove(code_point)
         if not remaining:
             return
 
-        x, _, _, _ = self.get_bounding_box()
+        x, _, _, _ = self._boundingbox
 
         self.file.seek(0)
         while True:
@@ -121,8 +161,6 @@ class BDF(GlyphCache):
             elif line.startswith(b"COMMENT"):
                 pass
             elif line.startswith(b"STARTCHAR"):
-                # print(lineno, line.strip())
-                # _, character_name = line.split()
                 character = True
             elif line.startswith(b"ENDCHAR"):
                 character = False
@@ -194,5 +232,4 @@ class BDF(GlyphCache):
                             x += 1
                     current_y += 1
             elif metadata:
-                # print(lineno, line.strip())
                 pass
